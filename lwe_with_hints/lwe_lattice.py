@@ -4,12 +4,24 @@ from fpylll.algorithms.bkz2 import BKZReduction
 import numpy as np
 from math import sqrt, pi, e, log, ceil
 
+import os
 import time
-import subprocess
-import shutil
 import warnings
 
+try:
+    import flatn
+
+    _has_flatn = True
+except ImportError:
+    _has_flatn = False
+
 FPLLL.set_precision(120)
+
+_bkz_strategies = BKZ_FPYLLL.DEFAULT_STRATEGY
+if isinstance(_bkz_strategies, bytes):
+    _bkz_strategies = _bkz_strategies.decode()
+if not os.path.isfile(_bkz_strategies):
+    _bkz_strategies = None
 
 
 class LWELattice:
@@ -144,8 +156,7 @@ class LWELattice:
 
         else:
             # Use flatter as fast pre-reduction if available, then BKZ to finish
-            has_flatter = shutil.which("flatter") is not None
-            if has_flatter:
+            if _has_flatn:
                 self.__vPrint("Using flatter + BKZ strategy.")
                 self.__vPrint("Starting flatter pre-reduction (dim=%d)." % basis.nrows)
                 self.__clock()
@@ -166,7 +177,7 @@ class LWELattice:
                 M.update_gso()
                 bkz = BKZReduction(M)
 
-                if not has_flatter:
+                if not _has_flatn:
                     self.__vPrint("Using LLL + BKZ strategy.")
                     self.__vPrint("Starting LLL.")
                     self.__clock()
@@ -179,12 +190,10 @@ class LWELattice:
                 while not foundSecret and beta < maxBlocksize + 1:
                     self.__vPrint("Starting BKZ with blocksize %d." % beta)
 
-                    par = BKZ_FPYLLL.Param(
-                        beta,
-                        strategies=BKZ_FPYLLL.DEFAULT_STRATEGY,
-                        max_loops=8,
-                        flags=BKZ_FPYLLL.MAX_LOOPS,
-                    )
+                    bkz_args = dict(max_loops=8, flags=BKZ_FPYLLL.MAX_LOOPS)
+                    if _bkz_strategies is not None:
+                        bkz_args["strategies"] = _bkz_strategies
+                    par = BKZ_FPYLLL.Param(beta, **bkz_args)
 
                     self.__clock()
 
@@ -220,28 +229,12 @@ class LWELattice:
 
     def __runFlatter(self, basis):
         nrows, ncols = basis.nrows, basis.ncols
-        input_str = "["
-        for i in range(nrows):
-            input_str += "[" + " ".join(str(basis[i, j]) for j in range(ncols)) + "]\n"
-        input_str += "]\n"
-
-        result = subprocess.run(
-            ["flatter"], input=input_str.encode(), capture_output=True, timeout=1800
-        )
-        if result.returncode != 0:
-            raise RuntimeError("flatter failed: " + result.stderr.decode())
-
+        mat = [[int(basis[i, j]) for j in range(ncols)] for i in range(nrows)]
+        reduced = flatn.reduce(mat)
         Bred = IntegerMatrix(nrows, ncols)
-        row_idx = 0
-        for line in result.stdout.decode().strip().split("\n"):
-            line = line.strip().strip("[]").strip()
-            if not line:
-                continue
-            vals = line.split()
-            if len(vals) == ncols:
-                for j in range(ncols):
-                    Bred[row_idx, j] = int(vals[j])
-                row_idx += 1
+        for i in range(nrows):
+            for j in range(ncols):
+                Bred[i, j] = int(reduced[i][j])
         return Bred
 
     def __checkCandidateShortest(self, candidate, targetLength):
