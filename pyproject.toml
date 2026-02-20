@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lwe-with-hints"
+version = "0.1.0"
+description = "Efficient lattice attacks on LWE with hints"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "fpylll",
+    "cysignals",  # undeclared runtime dependency of fpylll
+    "sympy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+include = ["lwe_with_hints*", "falcon_gen*"]
+
+[tool.ruff]
+line-length = 88
