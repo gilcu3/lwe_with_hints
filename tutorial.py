@@ -8,7 +8,7 @@ n,m = A.shape
 print("The LWE parameters are n = %d, m = %d, q = %d." % (n,m,q))
 
 print("Starting lattice reduction.")
-lattice = LWELattice(A,b,q)
+lattice = LWELattice(A,b,q,verbose=True)
 lattice.reduce()
 
 print("Lattice reduction found the following vector:")

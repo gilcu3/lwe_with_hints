@@ -5,7 +5,8 @@ import numpy as np
 from math import sqrt, pi, e, log, ceil
 
 import time
-from copy import deepcopy
+import subprocess
+import shutil
 import warnings
 
 FPLLL.set_precision(120)
@@ -141,50 +142,70 @@ class LWELattice:
       self.shortestVector = np.array(basis[i-1])
       
     else:
-      M = GSO.Mat( basis, float_type="mpfr" )
-      M.update_gso()
-      bkz = BKZReduction(M)
-
-      self.__vPrint("Starting LLL.")
-      self.__clock()
-      bkz.lll_obj()
-      self.__clock()
-      self.__vPrint("Finished LLL. Time: %fs." % self.__time)
-
-      beta = 2
-
-      
-      while not foundSecret and beta < maxBlocksize + 1:
-        
-        self.__vPrint("Starting BKZ with blocksize %d." % beta)
-        
-        par = BKZ_FPYLLL.Param(
-          beta,
-          strategies=BKZ_FPYLLL.DEFAULT_STRATEGY,
-          max_loops=8,
-          flags=BKZ_FPYLLL.MAX_LOOPS
-        )
-
+      # Use flatter as fast pre-reduction if available, then BKZ to finish
+      has_flatter = shutil.which("flatter") is not None
+      if has_flatter:
+        self.__vPrint("Using flatter + BKZ strategy.")
+        self.__vPrint("Starting flatter pre-reduction (dim=%d)." % basis.nrows)
         self.__clock()
+        basis = self.__runFlatter(basis)
+        self.__clock()
+        self.__vPrint("Finished flatter. Time: %fs." % self.__time)
 
-        for tour in range(bkzTours):
-          bkz(par)
-
-          foundSecret = self.__checkCandidateShortest(basis[0], targetLength)
-
-          if foundSecret:
-            self.successBlocksize = beta
-
-            self.__vPrint("Found secret at blocksize %d." % beta)
-
+        for i in range(basis.nrows):
+          if self.__checkCandidateShortest(basis[i], targetLength):
+            foundSecret = True
+            self.successBlocksize = 0
+            self.__vPrint("Found secret after flatter at row %d." % i)
+            self.shortestVector = np.array(basis[i])
             break
 
-        self.__clock()
+      if not foundSecret:
+        M = GSO.Mat( basis, float_type="mpfr" )
+        M.update_gso()
+        bkz = BKZReduction(M)
 
-        self.__vPrint("Finished BKZ with blocksize %d. Time: %fs." % (beta, self.__time))
+        if not has_flatter:
+          self.__vPrint("Using LLL + BKZ strategy.")
+          self.__vPrint("Starting LLL.")
+          self.__clock()
+          bkz.lll_obj()
+          self.__clock()
+          self.__vPrint("Finished LLL. Time: %fs." % self.__time)
 
-        beta += 1
-        
+        beta = 2
+
+        while not foundSecret and beta < maxBlocksize + 1:
+
+          self.__vPrint("Starting BKZ with blocksize %d." % beta)
+
+          par = BKZ_FPYLLL.Param(
+            beta,
+            strategies=BKZ_FPYLLL.DEFAULT_STRATEGY,
+            max_loops=8,
+            flags=BKZ_FPYLLL.MAX_LOOPS
+          )
+
+          self.__clock()
+
+          for tour in range(bkzTours):
+            bkz(par)
+
+            foundSecret = self.__checkCandidateShortest(basis[0], targetLength)
+
+            if foundSecret:
+              self.successBlocksize = beta
+
+              self.__vPrint("Found secret at blocksize %d." % beta)
+
+              break
+
+          self.__clock()
+
+          self.__vPrint("Finished BKZ with blocksize %d. Time: %fs." % (beta, self.__time))
+
+          beta += 1
+
       self.shortestVector = np.array(basis[0])
     
     if noKannanEmbedding:
@@ -192,6 +213,35 @@ class LWELattice:
     else:
       self.s = self.__recoverRemainingCoordinates()
     
+  def __runFlatter(self, basis):
+    nrows, ncols = basis.nrows, basis.ncols
+    input_str = "["
+    for i in range(nrows):
+      input_str += "[" + " ".join(str(basis[i, j]) for j in range(ncols)) + "]\n"
+    input_str += "]\n"
+
+    result = subprocess.run(
+      ["flatter"],
+      input=input_str.encode(),
+      capture_output=True,
+      timeout=1800
+    )
+    if result.returncode != 0:
+      raise RuntimeError("flatter failed: " + result.stderr.decode())
+
+    Bred = IntegerMatrix(nrows, ncols)
+    row_idx = 0
+    for line in result.stdout.decode().strip().split("\n"):
+      line = line.strip().strip("[]").strip()
+      if not line:
+        continue
+      vals = line.split()
+      if len(vals) == ncols:
+        for j in range(ncols):
+          Bred[row_idx, j] = int(vals[j])
+        row_idx += 1
+    return Bred
+
   def __checkCandidateShortest(self, candidate, targetLength):
     if targetLength is not None:
       return candidate.norm() < targetLength
