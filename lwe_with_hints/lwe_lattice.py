@@ -4,12 +4,22 @@ from fpylll.algorithms.bkz2 import BKZReduction
 import numpy as np
 from math import sqrt, pi, e, log, ceil
 
+import os
 import time
 import subprocess
 import shutil
 import warnings
 
 FPLLL.set_precision(120)
+
+# fpylll wheels may bake in a build-time path for the BKZ strategies file
+# (e.g. /project/local/share/fplll/strategies/default.json) that doesn't
+# exist at runtime. Fall back to no strategies file in that case.
+_bkz_strategies = BKZ_FPYLLL.DEFAULT_STRATEGY
+if isinstance(_bkz_strategies, bytes):
+    _bkz_strategies = _bkz_strategies.decode()
+if not os.path.isfile(_bkz_strategies):
+    _bkz_strategies = None
 
 
 class LWELattice:
@@ -179,12 +189,10 @@ class LWELattice:
                 while not foundSecret and beta < maxBlocksize + 1:
                     self.__vPrint("Starting BKZ with blocksize %d." % beta)
 
-                    par = BKZ_FPYLLL.Param(
-                        beta,
-                        strategies=BKZ_FPYLLL.DEFAULT_STRATEGY,
-                        max_loops=8,
-                        flags=BKZ_FPYLLL.MAX_LOOPS,
-                    )
+                    bkz_args = dict(max_loops=8, flags=BKZ_FPYLLL.MAX_LOOPS)
+                    if _bkz_strategies is not None:
+                        bkz_args["strategies"] = _bkz_strategies
+                    par = BKZ_FPYLLL.Param(beta, **bkz_args)
 
                     self.__clock()
 
